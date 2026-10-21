@@ -1,0 +1,33 @@
+source=mathaccel.gpu rank=6144 q=55039 batch=512 tile=16384 chunk=8192 packed_MB=845.4
+seconds=[3.4093589999247342, 3.3431475999532267, 3.47400349995587] median=3.409359
+         1089 function calls in 3.418 seconds
+
+   Ordered by: internal time
+   List reduced from 46 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    1.799    1.799    3.418    3.418 gpu.py:132(reduce)
+        4    0.991    0.248    0.991    0.248 {method 'get' of 'cupy._core.core._ndarray_base' objects}
+        1    0.377    0.377    0.377    0.377 {built-in method numpy.ascontiguousarray}
+        4    0.143    0.036    0.143    0.036 {method 'astype' of 'numpy.ndarray' objects}
+        1    0.099    0.099    0.102    0.102 gpu.py:115(_limbs_host)
+        1    0.003    0.003    0.003    0.003 {built-in method cupy._core.core.array}
+       36    0.002    0.000    0.002    0.000 {built-in method cupy_backends.cuda.libs.cublas.gemmEx}
+        4    0.001    0.000    0.001    0.000 {method 'set' of 'cupy._core.core._ndarray_base' objects}
+      192    0.001    0.000    0.001    0.000 {built-in method builtins.max}
+        4    0.001    0.000    0.001    0.000 {method 'fill' of 'cupy._core.core._ndarray_base' objects}
+        8    0.001    0.000    0.001    0.000 {method 'memset_async' of 'cupy.cuda.memory.MemoryPointer' objects}
+       36    0.000    0.000    0.002    0.000 gpu.py:124(_gemm_acc)
+        5    0.000    0.000    0.000    0.000 basic.py:15(empty)
+        8    0.000    0.000    0.001    0.000 basic.py:233(zeros)
+       81    0.000    0.000    0.000    0.000 _internal.py:262(__init__)
+      203    0.000    0.000    0.000    0.000 {built-in method builtins.min}
+      108    0.000    0.000    0.000    0.000 numeric.py:1911(isscalar)
+        4    0.000    0.000    0.000    0.000 {method 'reshape' of 'cupy._core.core._ndarray_base' objects}
+        1    0.000    0.000    0.000    0.000 {built-in method numpy.zeros}
+        1    0.000    0.000    0.000    0.000 {built-in method cupy.cuda.pinned_memory.alloc_pinned_memory}
+        4    0.000    0.000    0.991    0.248 __init__.py:826(asnumpy)
+       49    0.000    0.000    0.000    0.000 gpu.py:139(<genexpr>)
+        1    0.000    0.000    0.000    0.000 fromnumeric.py:38(_wrapit)
+       81    0.000    0.000    0.000    0.000 _internal.py:316(data)
+      112    0.000    0.000    0.000    0.000 {built-in method builtins.isinstance}

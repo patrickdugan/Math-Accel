@@ -146,3 +146,54 @@ The GPU path is **not faster yet** at this size. The likely causes, to check fir
 Profile `GPUReducer.reduce` before going further (next steps 2–3 above). Raising
 `gpu_min_stored` would keep small bases on the CPU. The GPU path stays off by default
 (`use_gpu = False`), so nothing depends on it.
+
+
+## Codex continuation: GPU staging and fold (2026-10-21, Asia/Taipei)
+
+The GPU path has been profiled and optimized locally. The running research lane was left
+untouched; no research code, parameters, checkpoints, or Git state were changed. Its log was
+still progressing (rank 19827/106970 at the last status check). No competing full closure was
+launched. Math-Accel checks used one CPU thread, with TEMP, TMP, and CUPY_CACHE_DIR on D:.
+
+Changes:
+- `mathaccel/gpu.py`: direct copies from packed blocks into pinned staging buffers, a separate
+  upload stream, and two event-protected slots when the rank spans multiple chunks. This removes
+  concatenate/pageable staging and permits upload/GEMM overlap.
+- The fold kernel now gathers V on Q, subtracts, and returns float64 residues. The entire
+  nine-term weighted int64 sum is below 2^56, so it needs only one modulo. This removes the
+  full host Q gather, int64-to-float64 conversion, and final NumPy modulo.
+- Custom cuBLAS calls follow the caller's CUDA stream; buffer lifetimes are protected through
+  asynchronous work and exception cleanup. The previous cuBLAS stream is restored.
+- `bench/bench_gpu_reduce.py` generates deterministic synthetic packed RREF inputs and supports
+  `--source` for old/new comparisons, `--check` against the exact CPU reducer, and host profiles.
+- `tests/test_gpu.py`: async slot reuse, odd final tiles, non-default streams, immutable inputs,
+  strided/permuted probes, empty dimensions, and rank 133144 for 1/2/3 limbs.
+
+Results: p=263167, batch=512, rank=6144, q=55039 (61183 total columns), packed basis=845.4 MB,
+block rows=128, tile columns=16384. Medians of five warmed repetitions:
+
+| Backend | Row chunk | Seconds per reduction |
+|---|---|---|
+| Original GPU at bdab8eb | 8192 | 3.800567 |
+| Optimized GPU | 8192 (default unchanged) | 1.336728 |
+| Optimized GPU | 2048 | 1.330063 |
+
+This is a **2.84x reduction microbenchmark improvement**, not a closure speedup. The optimized
+full-sized output matched the exact CPU reducer. CPU-side profiles of the old path measured
+about 0.54 s for gathering Q and 0.91 s for final subtraction/modulo in one representative call.
+GPU work is asynchronous, so its time is included in download waits, not isolated by cProfile.
+Raw profiles/timings are `bench/results/gpu_reduce_*.txt`; README includes reproduction commands.
+The research lane was active throughout, so timings are not from an isolated machine.
+
+Validation: **164 passed** (116 CPU/reference tests + 48 GPU tests), in 44.04 s with one CPU
+thread. The reference directory is unchanged. CuPy emits a CUDA_PATH detection warning but
+loads and runs the actual GPU tests successfully.
+
+**Next:**
+1. When the active research lane is idle, rerun the original paired CPU/GPU 240-second closure
+   benchmark at the same thread count, capture logs, and decide whether GPU wins overall.
+   GPU stays opt-in (`use_gpu=False` by default); no version/release promotion is justified yet.
+2. Move `add()`'s block rewrite onto the GPU, then consider retaining/reusing basis transfers
+   across reduction and rewrite. No rewrite changes were made in this continuation.
+3. Keep following the research lane's original handoff independently; report only its exact
+   summary lines when it finishes. Do not pull/commit in a running lane's worktree.

@@ -1,0 +1,51 @@
+source=mathaccel.gpu rank=6144 q=55039 batch=512 tile=16384 chunk=8192 packed_MB=845.4
+seconds=[1.3938380000181496, 1.3657348999986425, 1.3495711999712512] median=1.365735
+         1093 function calls in 1.299 seconds
+
+   Ordered by: internal time
+   List reduced from 44 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        4    0.918    0.230    0.918    0.230 {method 'get' of 'cupy._core.core._ndarray_base' objects}
+        1    0.269    0.269    1.299    1.299 gpu.py:140(reduce)
+        1    0.077    0.077    0.079    0.079 gpu.py:123(_limbs_host)
+        3    0.031    0.010    0.031    0.010 {built-in method cupy._core.core.array}
+       36    0.001    0.000    0.001    0.000 {built-in method cupy_backends.cuda.libs.cublas.gemmEx}
+        8    0.001    0.000    0.001    0.000 {method 'memset_async' of 'cupy.cuda.memory.MemoryPointer' objects}
+        4    0.001    0.000    0.001    0.000 {method 'set' of 'cupy._core.core._ndarray_base' objects}
+      192    0.000    0.000    0.000    0.000 {built-in method builtins.max}
+        8    0.000    0.000    0.001    0.000 basic.py:233(zeros)
+        4    0.000    0.000    0.000    0.000 {method 'fill' of 'cupy._core.core._ndarray_base' objects}
+        5    0.000    0.000    0.000    0.000 basic.py:15(empty)
+       36    0.000    0.000    0.001    0.000 gpu.py:132(_gemm_acc)
+      203    0.000    0.000    0.000    0.000 {built-in method builtins.min}
+       83    0.000    0.000    0.000    0.000 _internal.py:262(__init__)
+      108    0.000    0.000    0.000    0.000 numeric.py:1911(isscalar)
+        2    0.000    0.000    0.000    0.000 {built-in method numpy.empty}
+        4    0.000    0.000    0.000    0.000 {method 'reshape' of 'cupy._core.core._ndarray_base' objects}
+        3    0.000    0.000    0.031    0.010 from_data.py:59(asarray)
+       49    0.000    0.000    0.000    0.000 gpu.py:147(<genexpr>)
+        1    0.000    0.000    0.000    0.000 {method 'disable' of '_lsprof.Profiler' objects}
+        1    0.000    0.000    0.000    0.000 fromnumeric.py:38(_wrapit)
+       83    0.000    0.000    0.000    0.000 _internal.py:316(data)
+        1    0.000    0.000    0.000    0.000 {built-in method numpy.zeros}
+      112    0.000    0.000    0.000    0.000 {built-in method builtins.isinstance}
+        2    0.000    0.000    0.000    0.000 {built-in method cupy_backends.cuda.libs.cublas.setStream}
+
+
+Host elapsed by line (GPU waits are charged to their synchronization line):
+1.014647s line 235: result[:, c0:c1] = cp.asnumpy(out)
+0.136569s line 206: chunk[offset:offset + count] = C.data[lo - bs:hi - bs, j0:j1]
+0.106533s line 151: A = self._limbs_host(V[:, basis.P], m_pad, rank_pad)  # [L, m_pad, rank_pad]
+0.043280s line 159: dV = cp.asarray(V, dtype=cp.float64, order="C")
+0.001427s line 227: self._gemm_acc(A_ptr, rank_pad, limbs[j].data.ptr, kc,
+0.000813s line 207: offset += count
+0.000773s line 187: Cacc = cp.zeros((L * L, m_pad, qt_pad), dtype=cp.int32)
+0.000682s line 203: lo, hi = max(s, bs), min(e, be)
+0.000518s line 213: d.set(chunk, stream=upload)
+0.000432s line 202: bs, be = starts[b], starts[b + 1]
+0.000414s line 201: for b, C in enumerate(basis.blocks):
+0.000371s line 160: dQ = cp.asarray(basis.Q, dtype=cp.int64)
+0.000310s line 217: limbs.fill(0)
+0.000300s line 226: A_ptr = A[i].data.ptr + s
+0.000278s line 208: d = device[slot][:size].reshape(rows, pairs, 5)

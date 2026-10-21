@@ -14,9 +14,14 @@ exact.
 `GPUReducer.reduce(basis, V)` computes the same W as `CompressedBasis.reduce` (packed storage)
 with this product. W is tiled by columns. For each tile, the tile's slice of the packed basis is
 uploaded once, unpacked on the GPU straight into limbs, and multiplied in int32 into nine
-accumulators that persist across row chunks; one fold kernel per tile reduces them mod p. The
+accumulators that persist across row chunks; one fold kernel per tile reduces them mod p,
+gathers V on the non-pivot columns, and subtracts the product. The
 basis crosses PCIe once per call. GPU memory stays near
-(9 * 4 * m + 3 * rows_chunk) * tile_cols bytes plus the packed chunk.
+(9 * 4 * m + 3 * rows_chunk) * tile_cols bytes plus two packed chunks,
+the probe V (float64), its coefficient limbs, and the current output tile.
+Two pinned host buffers and a separate upload stream overlap staging and transfers
+with the preceding chunk's unpack and GEMMs. Events protect both host and device
+buffers from reuse while a transfer or an unpack is still reading them.
 """
 
 from __future__ import annotations
@@ -66,17 +71,21 @@ void unpack_limbs_T(const unsigned char* data, int rows, int pairs, int ncols, i
 _FOLD_SRC = r"""
 extern "C" __global__
 void fold_mod(const int* C, int L, long long plane, const long long* cw, long long p,
-              long long* out, long long n) {
-    // out[x] = sum_{i,j} cw[i + j] * C[(i * L + j) * plane + x] mod p, for x < n.
+              const double* V, long long vcols, const long long* Q, int c0,
+              int ncols, int ldq, double* out, long long n) {
     long long x = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (x >= n) return;
+    long long row = x / ncols, col = x % ncols;
+    long long offset = row * ldq + col;
     long long s = 0;
+    // L <= 3, cw < p < 2^21 and C <= 2^31-1, so the entire
+    // nine-term sum is below 2^56. One int64 modulo suffices.
     for (int i = 0; i < L; i++)
-        for (int j = 0; j < L; j++) {
-            s += cw[i + j] * (long long)C[(long long)(i * L + j) * plane + x];
-            s %= p;
-        }
-    out[x] = s;
+        for (int j = 0; j < L; j++)
+            s += cw[i + j] * (long long)C[(long long)(i * L + j) * plane + offset];
+    long long v = (long long)V[row * vcols + Q[c0 + col]];
+    long long residue = v - s % p;
+    out[x] = (double)(residue < 0 ? residue + p : residue);
 }
 """
 
@@ -107,6 +116,8 @@ class GPUReducer:
         self._fold = cp.RawKernel(_FOLD_SRC, "fold_mod")
         self._handle = cp.cuda.device.get_cublas_handle()
         self._one = np.array(1, np.int32)
+        self._ready = cp.cuda.Event(disable_timing=True)
+        self._ready.record()
 
     # ---------------------------------------------------------------- limbs on the host
     def _limbs_host(self, M: np.ndarray, rows_pad: int, cols_pad: int) -> "cp.ndarray":
@@ -129,13 +140,12 @@ class GPUReducer:
     def reduce(self, basis, V: np.ndarray) -> np.ndarray:
         """Exactly CompressedBasis.reduce(V) for a packed basis, with the products on the GPU."""
         p, L = self.p, self.L
-        W = np.ascontiguousarray(V[:, basis.Q])
-        if not basis.rank:
-            return W
+        m, q, rank = V.shape[0], len(basis.Q), basis.rank
+        if not rank or not m or not q:
+            return np.ascontiguousarray(V[:, basis.Q])
         # any block with the packed layout (mathaccel's or the reference PackedBlock)
         assert all(getattr(getattr(C, "data", None), "ndim", 0) == 3 and C.data.shape[2] == 5
                    for C in basis.blocks), "GPU path needs packed blocks"
-        m, q, rank = W.shape[0], W.shape[1], basis.rank
         assert rank <= K_EXACT, "fold more often for ranks above 133144 (not needed below)"
         m_pad, rank_pad = _pad(m), _pad(rank)
         A = self._limbs_host(V[:, basis.P], m_pad, rank_pad)  # [L, m_pad, rank_pad]
@@ -143,45 +153,91 @@ class GPUReducer:
         starts = np.cumsum([0] + [C.rows for C in basis.blocks])
         kc = self.rows_chunk
         tile = self.tile_cols
-        result = np.empty_like(W)
-        for c0 in range(0, q, tile):
-            c1 = min(q, c0 + tile)
-            if c0 % 2:
-                raise AssertionError("tiles must start at an even column (pairs of residues)")
-            j0, j1 = c0 // 2, (c1 + 1) // 2
-            ncols = c1 - c0
-            qt_pad = _pad(ncols)
-            Cacc = cp.zeros((L * L, m_pad, qt_pad), dtype=cp.int32)
-            limbs = cp.zeros((L, qt_pad, kc), dtype=cp.int8)
-            for s in range(0, rank, kc):
-                e = min(rank, s + kc)
-                # host: rows s:e of the basis, columns c0:c1, as packed bytes (rows x pairs x 5)
-                parts = []
-                for b, C in enumerate(basis.blocks):
-                    bs, be = starts[b], starts[b + 1]
-                    lo, hi = max(s, bs), min(e, be)
-                    if lo < hi:
-                        parts.append(C.data[lo - bs:hi - bs, j0:j1])
-                chunk = np.ascontiguousarray(parts[0] if len(parts) == 1 else np.concatenate(parts))
-                d = cp.asarray(chunk)
-                limbs.fill(0)
-                rows = e - s
-                total = rows * (j1 - j0)
-                self._unpack(((total + 255) // 256,), (256,),
-                             (d, np.int32(rows), np.int32(j1 - j0), np.int32(ncols), np.int32(L),
-                              np.int32(kc), np.int32(qt_pad), limbs))
-                k = _pad(rows, 16)
-                for i in range(L):
-                    for j in range(L):
-                        A_ptr = A[i].data.ptr + s  # column offset s in a row-major m_pad x rank_pad
-                        self._gemm_acc(A_ptr, rank_pad, limbs[j].data.ptr, kc,
-                                       Cacc[i * L + j].data.ptr, m_pad, qt_pad, k)
-                del d
-            out = cp.empty((m_pad, qt_pad), dtype=cp.int64)
-            n = m_pad * qt_pad
-            self._fold(((n + 255) // 256,), (256,),
-                       (Cacc, np.int32(L), np.int64(m_pad * qt_pad), self.cw, np.int64(p), out, np.int64(n)))
-            prod = cp.asnumpy(out[:m, :ncols]).astype(np.float64)
-            result[:, c0:c1] = np.mod(W[:, c0:c1] - prod, p)
-            del Cacc, limbs, out
-        return result
+        result = np.empty((m, q), dtype=V.dtype)
+        # Fold gathers Q and subtracts on device, avoiding a full host gather,
+        # int64-to-float64 conversion, and NumPy modulo of every output entry.
+        dV = cp.asarray(V, dtype=cp.float64, order="C")
+        dQ = cp.asarray(basis.Q, dtype=cp.int64)
+        compute = cp.cuda.get_current_stream()
+        compute.wait_event(self._ready)
+        upload = cp.cuda.Stream(non_blocking=True)
+        # Bind custom cuBLAS calls to the caller's stream as well as RawKernels.
+        previous_stream = cublas.getStream(self._handle)
+        # Retain pinned allocations until all async readers have completed. Two
+        # slots suffice: host staging/upload of chunk N can overlap GEMMs N-1.
+        slots = min(2, (rank + kc - 1) // kc)
+        capacity = min(rank, kc) * ((min(q, tile) + 1) // 2) * 5
+        pinned = [cp.cuda.alloc_pinned_memory(capacity) for _ in range(slots)]
+        host = [np.frombuffer(buf, dtype=np.uint8) for buf in pinned]
+        device = [cp.empty(capacity, dtype=cp.uint8) for _ in range(slots)]
+        uploaded = [cp.cuda.Event(disable_timing=True) for _ in range(slots)]
+        consumed = [cp.cuda.Event(disable_timing=True) for _ in range(slots)]
+        used = [False] * slots
+        # Device allocations may reuse storage previously touched on compute.
+        allocated = cp.cuda.Event(disable_timing=True)
+        allocated.record(compute)
+        upload.wait_event(allocated)
+        try:
+            cublas.setStream(self._handle, compute.ptr)
+            for c0 in range(0, q, tile):
+                c1 = min(q, c0 + tile)
+                j0, j1 = c0 // 2, (c1 + 1) // 2
+                ncols = c1 - c0
+                qt_pad = _pad(ncols)
+                Cacc = cp.zeros((L * L, m_pad, qt_pad), dtype=cp.int32)
+                limbs = cp.zeros((L, qt_pad, kc), dtype=cp.int8)
+                for chunk_index, s in enumerate(range(0, rank, kc)):
+                    e = min(rank, s + kc)
+                    rows, pairs = e - s, j1 - j0
+                    slot = chunk_index % slots
+                    if used[slot]:
+                        # Host writes must wait for the previous DMA read.
+                        uploaded[slot].synchronize()
+                    size = rows * pairs * 5
+                    chunk = host[slot][:size].reshape(rows, pairs, 5)
+                    # Copy directly from strided blocks into pinned storage;
+                    # no concatenate temporary or pageable staging allocation.
+                    offset = 0
+                    for b, C in enumerate(basis.blocks):
+                        bs, be = starts[b], starts[b + 1]
+                        lo, hi = max(s, bs), min(e, be)
+                        if lo < hi:
+                            count = hi - lo
+                            chunk[offset:offset + count] = C.data[lo - bs:hi - bs, j0:j1]
+                            offset += count
+                    d = device[slot][:size].reshape(rows, pairs, 5)
+                    with upload:
+                        if used[slot]:
+                            # Device writes must wait for the previous unpack.
+                            upload.wait_event(consumed[slot])
+                        d.set(chunk, stream=upload)
+                        uploaded[slot].record(upload)
+                    used[slot] = True
+                    compute.wait_event(uploaded[slot])
+                    limbs.fill(0)
+                    total = rows * pairs
+                    self._unpack(((total + 255) // 256,), (256,),
+                                 (d, np.int32(rows), np.int32(pairs), np.int32(ncols), np.int32(L),
+                                  np.int32(kc), np.int32(qt_pad), limbs))
+                    consumed[slot].record(compute)
+                    k = _pad(rows, 16)
+                    for i in range(L):
+                        for j in range(L):
+                            A_ptr = A[i].data.ptr + s
+                            self._gemm_acc(A_ptr, rank_pad, limbs[j].data.ptr, kc,
+                                           Cacc[i * L + j].data.ptr, m_pad, qt_pad, k)
+                out = cp.empty((m, ncols), dtype=cp.float64)
+                n = m * ncols
+                self._fold(((n + 255) // 256,), (256,),
+                           (Cacc, np.int32(L), np.int64(m_pad * qt_pad), self.cw, np.int64(p),
+                            dV, np.int64(V.shape[1]), dQ, np.int32(c0), np.int32(ncols),
+                            np.int32(qt_pad), out, np.int64(n)))
+                result[:, c0:c1] = cp.asnumpy(out)
+                del Cacc, limbs, out
+            return result
+        finally:
+            # Also on exceptions, don't release pinned/device buffers while an
+            # upload or unpack still uses them. Stream order covers all GEMMs.
+            upload.synchronize()
+            compute.synchronize()
+            cublas.setStream(self._handle, previous_stream)

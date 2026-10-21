@@ -1,0 +1,33 @@
+source=D:\Temp\mathaccel_work\gpu_before.py rank=6144 q=55039 batch=512 tile=16384 chunk=8192 packed_MB=845.4
+seconds=[4.272812399896793, 4.204619699972682, 4.366147199994884] median=4.272812
+         1281 function calls in 4.032 seconds
+
+   Ordered by: internal time
+   List reduced from 42 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    1.946    1.946    4.032    4.032 gpu_before.py:129(reduce)
+        4    1.058    0.264    1.058    0.264 {method 'get' of 'cupy._core.core._ndarray_base' objects}
+        5    0.596    0.119    0.596    0.119 {built-in method numpy.ascontiguousarray}
+        4    0.187    0.047    0.187    0.047 {method 'astype' of 'numpy.ndarray' objects}
+        5    0.156    0.031    0.156    0.031 {built-in method cupy._core.core.array}
+        1    0.085    0.085    0.087    0.087 gpu_before.py:112(_limbs_host)
+       36    0.002    0.000    0.002    0.000 {built-in method cupy_backends.cuda.libs.cublas.gemmEx}
+        4    0.001    0.000    0.001    0.000 {method 'fill' of 'cupy._core.core._ndarray_base' objects}
+        8    0.001    0.000    0.001    0.000 {method 'memset_async' of 'cupy.cuda.memory.MemoryPointer' objects}
+        8    0.000    0.000    0.001    0.000 basic.py:233(zeros)
+       36    0.000    0.000    0.002    0.000 gpu_before.py:121(_gemm_acc)
+        4    0.000    0.000    0.000    0.000 basic.py:15(empty)
+       81    0.000    0.000    0.000    0.000 _internal.py:262(__init__)
+      200    0.000    0.000    0.000    0.000 {built-in method builtins.min}
+      108    0.000    0.000    0.000    0.000 numeric.py:1911(isscalar)
+      192    0.000    0.000    0.000    0.000 {built-in method builtins.max}
+      192    0.000    0.000    0.000    0.000 {method 'append' of 'list' objects}
+        5    0.000    0.000    0.156    0.031 from_data.py:59(asarray)
+       81    0.000    0.000    0.000    0.000 _internal.py:316(data)
+        1    0.000    0.000    0.000    0.000 fromnumeric.py:38(_wrapit)
+        1    0.000    0.000    0.000    0.000 {built-in method numpy.empty}
+       49    0.000    0.000    0.000    0.000 gpu_before.py:136(<genexpr>)
+        1    0.000    0.000    0.000    0.000 {method 'disable' of '_lsprof.Profiler' objects}
+      112    0.000    0.000    0.000    0.000 {built-in method builtins.isinstance}
+        1    0.000    0.000    0.000    0.000 {method 'cumsum' of 'numpy.ndarray' objects}

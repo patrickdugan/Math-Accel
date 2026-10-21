@@ -10,7 +10,7 @@ large polynomial algebra, grown by multiplying by tower variables and reducing u
 or contains 1. Those runs reach $10^5$ columns and take hours to days on one machine, so the
 engine's speed decides which questions can be asked.
 
-## What is here (v0.2)
+## What is here (v0.2 CPU; v0.3 GPU development)
 
 - **`mathaccel.CompressedBasis`**: an exact row-reduced basis mod $p$ that stores only the
   non-pivot columns.
@@ -27,7 +27,7 @@ engine's speed decides which questions can be asked.
 - **`mathaccel.reference`**: the original implementations, vendored verbatim. They are the ground
   truth.
 
-**Exactness model.** All arithmetic is float64 on integers in $[0,p)$. Every matrix product is cut
+**CPU exactness model.** Arithmetic is float64 on integers in $[0,p)$. Every matrix product is cut
 along its inner dimension into chunks of at most
 $k_{\max}(p)=\lfloor(2^{53}-p)/(p-1)^2\rfloor-1$ terms, so each partial sum is an integer below
 $2^{53}$, and is reduced mod $p$ between chunks.
@@ -85,21 +85,87 @@ For comparison, the research project's dense kernel needed 1576 s for the same $
 
 `bench/bench_chain.py` reproduces these. It needs the research repository's closure driver.
 
+## Experimental GPU reduction
+
+`mathaccel.gpu.GPUReducer` implements exact packed-basis reduction with CuPy and cuBLAS
+int8 tensor-core products. It is **off by default**. With a compatible CuPy/CUDA installation:
+
+```python
+from mathaccel import CompressedBasis
+
+CompressedBasis.use_gpu = True
+basis = CompressedBasis(n, p, pack=True)
+```
+
+The backend is selected once the packed basis stores at least `gpu_min_stored` entries
+(default 2,000,000), and requires rank at most 133144. It uses up to three 7-bit limbs per
+residue and nine int8-to-int32 products. At that rank bound every int32 accumulator is exact;
+the weighted nine-term sum stays below 2^56 in int64. A final kernel reduces it mod p,
+gathers the probe's non-pivot columns, and subtracts the product exactly.
+
+Packed rows are copied directly into reusable pinned buffers. A separate CUDA stream uploads
+the next chunk while the preceding chunk's GPU work runs; events protect host and device
+buffers from premature reuse. There are two buffers when the rank spans multiple row chunks,
+and one otherwise. The basis still crosses PCIe once per `reduce()` call. `add()`'s block
+rewrite still uses the CPU.
+
+**Full closure result before these transfer/fold changes.** On the 61183-column isogeny
+h=2, m=6, D=7 closure, CPU v0.2 reached rank 6118 in 240 seconds; the original GPU path
+reached 5463. The optimized path has **not yet been remeasured on the full closure**.
+
+**GPU reduction microbenchmark, 2026-10-21.** RTX 3050 Laptop, p=263167, batch 512,
+rank 6144, 55039 non-pivot columns, 845.4 MB of packed basis in 128-row blocks, and
+16384-column tiles. These are deterministic synthetic RREF inputs, not a closure run.
+Medians include host staging, transfers, kernels, and the returned NumPy result, after one
+warmup and over five repeats:
+
+| GPU implementation | Row chunk | Median per reduction |
+|---|---|---|
+| Original (`bdab8eb`) | 8192 | 3.801 s |
+| Pinned staging and fused gather/subtract/fold | 8192 (unchanged default) | **1.337 s (2.84×)** |
+| Same optimization, smaller chunks for overlap | 2048 | 1.330 s |
+
+The optimized full-sized result matched the exact CPU reducer. All **164 tests pass**,
+including 48 GPU cases covering equality with the reference, async buffer reuse, non-default
+streams, strided probes, empty dimensions, and the maximum exact inner dimension. The
+vendored reference is unchanged.
+
+Profiles attribute about 0.54 s to the old host gather and 0.91 s to its final NumPy
+subtraction/modulo in one representative call; GPU waits are charged to the synchronized
+download, so these profiles do not isolate individual device kernels. Raw measurements and
+profiles are in `bench/results/gpu_reduce_*.txt`.
+
+The research lane continued running during these measurements; Math-Accel used one CPU
+thread. These timings establish a reduction microbenchmark improvement, not a full-closure
+speedup or a reason to enable GPU by default. Version/release promotion awaits that comparison.
+
+To reproduce in PowerShell on this machine (keep temporary files and CuPy caches on D:):
+
+```powershell
+$env:CUPY_CACHE_DIR = 'D:/Temp/cupy_cache'
+$env:TEMP = 'D:/Temp'
+$env:TMP = 'D:/Temp'
+$env:NUMBA_NUM_THREADS = '1'
+$env:OPENBLAS_NUM_THREADS = '1'
+$env:OMP_NUM_THREADS = '1'
+git show bdab8eb:mathaccel/gpu.py | Set-Content -Encoding utf8 D:/Temp/gpu_before.py
+.venv/Scripts/python.exe bench/bench_gpu_reduce.py --source D:/Temp/gpu_before.py --repeats 5
+.venv/Scripts/python.exe bench/bench_gpu_reduce.py --repeats 5 --check
+.venv/Scripts/python.exe bench/bench_gpu_reduce.py --rows-chunk 2048 --repeats 5
+```
+
+Use `--profile` or `--line-profile` for host timings. Smaller dimensions can be supplied
+with `--rank`, `--cols`, and `--batch` for a low-memory correctness check.
+
 ## Roadmap
 
 1. **CPU.**
    - Fuse the mod-$p$ steps into the matrix-product loop.
    - Parallelize the small recursive RREF and the gathers of pivot and non-pivot columns.
-2. **GPU, exactly.** Consumer GPUs run float64 at 1/32 to 1/64 of the float32 rate, so the float64
-   trick does not transfer. The plan is **int8 tensor cores with limb splitting**:
-   - write each residue mod $p<2^{21}$ as three 7-bit limbs;
-   - form a product as 9 int8 matrix products with exact int32 accumulation, exact for inner
-     dimensions up to about $2^{17}$;
-   - recombine mod $p$ on the device.
-
-   With 4 GB of VRAM the basis does not fit for large closures, so blocks are streamed. That pays
-   only for the matrix-product share of the time, which the CPU work above should make the larger
-   share.
+2. **GPU, exactly.** The opt-in reduction above is implemented. Next:
+   - rerun the paired 240-second full-closure comparison when the active research lane is idle;
+   - move `add()`'s stored-block rewrite to the GPU using the same exact limb products;
+   - reduce repeated basis transfers across batches and measure the small-basis crossover.
 3. **A closure driver** independent of the research code: generic operators (multiplication
    tables in layers), checkpoint and resume, and a validation harness to run against any new
    backend before use.

@@ -1,0 +1,18 @@
+source=D:\Temp\mathaccel_work\gpu_before.py rank=6144 q=55039 batch=512 tile=16384 chunk=8192 packed_MB=845.4
+seconds=[3.1451357000041753] median=3.145136
+Host elapsed by line (GPU waits are charged to their synchronization line):
+1.120944s line 184: prod = cp.asnumpy(out[:m, :ncols]).astype(np.float64)
+0.905702s line 185: result[:, c0:c1] = np.mod(W[:, c0:c1] - prod, p)
+0.538189s line 132: W = np.ascontiguousarray(V[:, basis.Q])
+0.356221s line 165: chunk = np.ascontiguousarray(parts[0] if len(parts) == 1 else np.concatenate(parts))
+0.111860s line 166: d = cp.asarray(chunk)
+0.104703s line 141: A = self._limbs_host(V[:, basis.P], m_pad, rank_pad)  # [L, m_pad, rank_pad]
+0.002314s line 154: Cacc = cp.zeros((L * L, m_pad, qt_pad), dtype=cp.int32)
+0.001503s line 177: self._gemm_acc(A_ptr, rank_pad, limbs[j].data.ptr, kc,
+0.000775s line 143: starts = np.cumsum([0] + [C.rows for C in basis.blocks])
+0.000515s line 164: parts.append(C.data[lo - bs:hi - bs, j0:j1])
+0.000469s line 155: limbs = cp.zeros((L, qt_pad, kc), dtype=cp.int8)
+0.000412s line 167: limbs.fill(0)
+0.000412s line 176: A_ptr = A[i].data.ptr + s  # column offset s in a row-major m_pad x rank_pad
+0.000380s line 162: lo, hi = max(s, bs), min(e, be)
+0.000346s line 161: bs, be = starts[b], starts[b + 1]
