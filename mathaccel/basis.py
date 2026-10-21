@@ -37,7 +37,7 @@ def submul(V: np.ndarray, A: np.ndarray, B: np.ndarray, p: int) -> np.ndarray:
         return V
     step = kmax(p)
     for s in range(0, Kd, step):
-        V -= A[:, s:s + step] @ B[s:s + step]
+        K.gemm_sub(V, A[:, s:s + step], np.ascontiguousarray(B[s:s + step]))
         K.mod_inplace(V, p)
     return V
 
@@ -107,24 +107,53 @@ class CompressedBasis:
     def rank(self) -> int:
         return len(self.P)
 
+    #: memory for one streamed chunk of basis rows in reduce(), in bytes (float64)
+    chunk_bytes = 256 * 2 ** 20
+
     def reduce(self, V: np.ndarray) -> np.ndarray:
-        """V (float64, entries in [0, p), full width n) reduced against the basis, on columns Q."""
+        """V (float64, entries in [0, p), full width n) reduced against the basis, on columns Q.
+
+        The rows of all blocks are streamed in order into one buffer of `chunk` rows (at least
+        `sub`, at most kmax(p) and the rank, and about `chunk_bytes` of float64), and each full buffer is
+        subtracted with one in-place product: W <- W - coef[:, rows] @ buffer. Every product is one
+        inner sum of at most kmax(p) terms, and W is reduced mod p before the running count of
+        terms would exceed kmax(p), so every partial sum stays an integer below 2^53. The result
+        is the reference's exactly; only the grouping of the terms differs.
+        """
         p = self.p
-        W = V[:, self.Q].copy()
+        W = np.ascontiguousarray(V[:, self.Q])
         if not self.rank:
             return W
-        coef = V[:, self.P]
-        km, acc, off = kmax(p), 0, 0
-        step = min(self.sub, km)  # one sub-block's product is one inner sum: at most kmax(p) terms
+        q = W.shape[1]
+        coefT = np.ascontiguousarray(V[:, self.P].T)  # rank x batch, so coefT[a:b].T is F-ordered
+        km = kmax(p)
+        chunk = int(min(km, self.rank, max(self.sub, self.chunk_bytes // (8 * max(q, 1)))))
+        buf = np.empty((chunk, q), dtype=np.float64)
+        state = [0, 0, 0]  # rows filled in buf, basis row of buf[0], terms since the last mod
+
+        def flush():
+            filled, start, acc = state
+            if not filled:
+                return
+            if acc + filled > km:
+                K.mod_inplace(W, p)
+                acc = 0
+            K.gemm_sub(W, coefT[start:start + filled].T, buf[:filled])
+            state[:] = [0, start + filled, acc + filled]
+
         for C in self.blocks:
-            for s in range(0, C.shape[0], step):
-                blk = _rows64(C, s, s + step)
-                if acc + blk.shape[0] > km:
-                    K.mod_inplace(W, p)
-                    acc = 0
-                W -= coef[:, off + s:off + s + blk.shape[0]] @ blk
-                acc += blk.shape[0]
-            off += C.shape[0]
+            s, rows = 0, C.shape[0]
+            while s < rows:
+                take = min(chunk - state[0], rows - s)
+                if isinstance(C, PackedBlock):
+                    K.unpack_into(C.data, s, s + take, C.ncols, buf, state[0])
+                else:
+                    buf[state[0]:state[0] + take] = C[s:s + take]
+                state[0] += take
+                s += take
+                if state[0] == chunk:
+                    flush()
+        flush()
         K.mod_inplace(W, p)
         return W
 

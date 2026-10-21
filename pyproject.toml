@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "math-accel"
-version = "0.1.0"
+version = "0.2.0"
 description = "Exact modular linear algebra for degree-bounded closures (Macaulay / polynomial-calculus style) mod p"
 readme = "README.md"
 license = { text = "MIT" }
@@ -13,8 +13,8 @@ requires-python = ">=3.10"
 dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
-fast = ["numba>=0.59"]
-test = ["pytest>=7", "numba>=0.59"]
+fast = ["numba>=0.59", "scipy>=1.10"]
+test = ["pytest>=7", "numba>=0.59", "scipy>=1.10"]
 
 [tool.setuptools.packages.find]
 include = ["mathaccel*"]

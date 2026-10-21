@@ -10,7 +10,7 @@ large polynomial algebra, grown by multiplying by tower variables and reducing u
 or contains 1. Those runs reach $10^5$ columns and take hours to days on one machine, so the
 engine's speed decides which questions can be asked.
 
-## What is here (v0.1)
+## What is here (v0.2)
 
 - **`mathaccel.CompressedBasis`**: an exact row-reduced basis mod $p$ that stores only the
   non-pivot columns.
@@ -39,10 +39,12 @@ $2^{53}$, and is reduced mod $p$ between chunks.
 - identical pivots, column sets, stored blocks, reductions and return values over randomized
   sequences of rank-deficient additions;
 - for $p$ = 7681, 263167, 1032193 and 1048573, in both storage modes, with Numba and with the NumPy
-  fallback (98 tests).
+  fallback;
+- the streaming reduction at $p=16777213<2^{24}$, where $k_{\max}(p)=31$ forces a reduction mod $p$
+  every 31 terms, with buffers from one block to the whole basis (116 tests).
 
 ```bash
-python -m venv .venv && .venv/Scripts/pip install numpy numba pytest   # or .venv/bin/pip
+python -m venv .venv && .venv/Scripts/pip install numpy numba scipy pytest   # or .venv/bin/pip
 python -m pytest -q tests
 ```
 
@@ -59,14 +61,25 @@ its time went to single-threaded memory work.
 | matrix products and mod-$p$ reduction | ~42% |
 | other | ~11% |
 
-**v0.1 against the reference.** Both use the same closure driver on the same machine (i5-11400H,
-6 cores and 12 threads, 6 threads each):
+**Against the reference.** All runs use the same closure driver on the same machine (i5-11400H,
+6 cores and 12 threads, 6 threads each).
 
-| Closure | Reference | Math-Accel | Result |
-|---|---|---|---|
-| isogeny $m=5$, $D=6$, 7937 columns, run to completion | 51.7 s | 29.6 s (**1.75×**) | rank 3695 for both |
-| isogeny $m=5$, $D=7$, 15360 columns, run to completion | 972.7 s | 445.9 s (**2.18×**) | refuted ($1\in W_D$, rank 15360) for both |
-| isogeny $m=5$, $D=7$, 15360 columns, first 240 s | rank 5056 | rank 7203 | — |
+| Closure | Reference | v0.1 | v0.2 | Result |
+|---|---|---|---|---|
+| isogeny $m=5$, $D=6$, 7937 columns, run to completion | 51.7 s | 29.6 s | — | rank 3695 for all |
+| isogeny $m=5$, $D=7$, 15360 columns, run to completion | 972.7 s | 445.9 s (2.2×) | **191.3 s (5.1×)** | refuted ($1\in W_D$, rank 15360) for all |
+| isogeny $m=5$, $D=7$, first 240 s | rank 5056 | rank 7203 | — | — |
+
+What v0.1 changed: parallel packing and unpacking, and a fused column gather in place of full
+unpacks and copies.
+
+What v0.2 changed in `reduce()`:
+- it streams the rows of consecutive blocks into one buffer of adaptive size, so there are fewer
+  and larger exact matrix products, each at most $k_{\max}(p)$ terms;
+- it accumulates in place with BLAS `dgemm` and $eta=1$, with no temporary and no coefficient
+  copies (SciPy, optional).
+
+`add()` uses the same in-place update.
 
 For comparison, the research project's dense kernel needed 1576 s for the same $D=7$ closure.
 
@@ -75,9 +88,8 @@ For comparison, the research project's dense kernel needed 1576 s for the same $
 ## Roadmap
 
 1. **CPU.**
-   - Remove the remaining copies in `reduce()` (the gathers of pivot and non-pivot columns).
    - Fuse the mod-$p$ steps into the matrix-product loop.
-   - Parallelize the small recursive RREF.
+   - Parallelize the small recursive RREF and the gathers of pivot and non-pivot columns.
 2. **GPU, exactly.** Consumer GPUs run float64 at 1/32 to 1/64 of the float32 rate, so the float64
    trick does not transfer. The plan is **int8 tensor cores with limb splitting**:
    - write each residue mod $p<2^{21}$ as three 7-bit limbs;

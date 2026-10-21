@@ -96,6 +96,23 @@ def test_compressed_basis_identical(backend, p, pack, n, rows, nbatch, sub):
         assert np.array_equal(ref.reduce(probe), acc.reduce(probe))
 
 
+@pytest.mark.parametrize("p", [7681, 1048573, 16777213])  # 16777213 < 2^24: kmax(p) = 31
+@pytest.mark.parametrize("chunk_bytes", [1, 4096, 2 ** 40])  # chunk = sub, a few rows, kmax(p)
+def test_streaming_reduce_exact(backend, p, chunk_bytes, monkeypatch):
+    """Exercise reduce()'s streaming across blocks and its mod-p guard; p near 2^24 forces a
+    reduction mod p every 31 terms."""
+    monkeypatch.setattr(CompressedBasis, "chunk_bytes", chunk_bytes)
+    rng = np.random.default_rng(p % 1000 + chunk_bytes % 997)
+    n, rows, sub = 200, 23, 8
+    ref = REF.CompressedBasis(n, p, sub=sub, pack=False)
+    acc = CompressedBasis(n, p, sub=sub, pack=False)
+    for V in _batches(rng, n, p, 7, rows):
+        assert ref.add(V.copy()) == acc.add(V.copy())
+        _same_basis(ref, acc)
+        probe = rng.integers(0, p, size=(9, n)).astype(np.float64)
+        assert np.array_equal(ref.reduce(probe), acc.reduce(probe))
+
+
 def test_row_indexing_matches_reference(backend):
     rng = np.random.default_rng(5)
     a = _rand(rng, 23, 101, 1 << 20)

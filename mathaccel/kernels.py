@@ -32,6 +32,11 @@ try:  # pragma: no cover - exercised in both configurations by the tests
 except ImportError:  # pragma: no cover
     HAVE_NUMBA = False
 
+try:  # pragma: no cover
+    from scipy.linalg.blas import dgemm as _dgemm
+except ImportError:  # pragma: no cover
+    _dgemm = None
+
 
 if HAVE_NUMBA:
 
@@ -73,6 +78,23 @@ if HAVE_NUMBA:
                 if c + 1 < ncols:
                     out[r, c + 1] = np.float64(w >> sh)
         return out
+
+    @njit(parallel=True, cache=True)
+    def _unpack_into(data, s, e, ncols, out, r0):
+        rows = e - s
+        c2 = data.shape[1]
+        mask = np.uint64(_MASK)
+        sh = np.uint64(PACK_BITS)
+        for r in prange(rows):
+            for j in range(c2):
+                w = (np.uint64(data[s + r, j, 0]) | (np.uint64(data[s + r, j, 1]) << np.uint64(8))
+                     | (np.uint64(data[s + r, j, 2]) << np.uint64(16))
+                     | (np.uint64(data[s + r, j, 3]) << np.uint64(24))
+                     | (np.uint64(data[s + r, j, 4]) << np.uint64(32)))
+                c = 2 * j
+                out[r0 + r, c] = np.float64(w & mask)
+                if c + 1 < ncols:
+                    out[r0 + r, c + 1] = np.float64(w >> sh)
 
     @njit(parallel=True, cache=True)
     def _gather(data, s, e, cols):
@@ -127,6 +149,34 @@ def _words(data: np.ndarray) -> np.ndarray:
     full = np.zeros(data.shape[:2] + (8,), dtype=np.uint8)
     full[:, :, :5] = data
     return full.view(np.uint64).reshape(data.shape[:2])
+
+
+def unpack_into(data: np.ndarray, s: int, e: int, ncols: int, out: np.ndarray, r0: int) -> None:
+    """Write rows s:e of packed data into out[r0:r0 + (e - s)] (float64, C-contiguous)."""
+    e = min(e, data.shape[0])
+    if e <= s:
+        return
+    if HAVE_NUMBA:
+        _unpack_into(data, s, e, ncols, out, r0)
+    else:
+        out[r0:r0 + (e - s)] = unpack_rows(data, s, e, ncols)
+
+
+def gemm_sub(C: np.ndarray, A: np.ndarray, B: np.ndarray) -> np.ndarray:
+    """C <- C - A @ B in place, for C-contiguous float64 C (m x n) and B (k x n); A is m x k.
+
+    With SciPy this is one BLAS dgemm with beta = 1 on the transposed problem
+    C^T <- C^T - B^T A^T, so no temporary of C's size is made. A is used without a copy when it is
+    F-contiguous, for instance the transpose of a C-contiguous k x m array. Without SciPy it is
+    C -= A @ B.
+    """
+    if A.shape[1] == 0 or C.size == 0:
+        return C
+    if _dgemm is not None and C.flags.c_contiguous and B.flags.c_contiguous:
+        _dgemm(-1.0, B.T, A, beta=1.0, c=C.T, trans_a=0, trans_b=1, overwrite_c=True)
+        return C
+    C -= A @ B
+    return C
 
 
 def unpack_rows(data: np.ndarray, s: int, e: int, ncols: int) -> np.ndarray:
