@@ -2,12 +2,15 @@
 
 This is the compressed basis of `semaev-index-calculus` (`semaev_ic/cbasis.py`, vendored unchanged
 in `mathaccel.reference`). It keeps the same object, the same algorithm and the same order of
-operations, and it gives bit-identical results; `tests/test_equivalence.py` checks this. Only the
-data movement differs:
+operations, and it gives bit-identical results; `tests/test_equivalence.py` checks this. The
+CPU path accelerates data movement and exact updates:
 - packed rows are unpacked by a parallel kernel;
 - `add()` gathers just the columns it needs from each packed block, with no full unpack and no
   copy;
 - reductions mod p run in parallel.
+
+The optional GPU backend uses exact integer limb products for reduction and the stored-block
+rewrite in `add()`, returning the same packed bytes.
 
 The basis is kept in reduced row echelon form on the current non-pivot columns Q: r rows by
 (n - r) stored entries, at most n^2 / 4. Each `add()` eliminates the new pivots from the old rows
@@ -51,6 +54,13 @@ class PackedBlock:
     def __init__(self, a: np.ndarray):
         self.rows, self.ncols = a.shape
         self.data = K.pack_rows(a)
+
+    @classmethod
+    def _from_packed(cls, data: np.ndarray, ncols: int):
+        """Adopt packed bytes produced by an exact backend, without unpack/repack."""
+        block = cls.__new__(cls)
+        block.data, block.rows, block.ncols = data, data.shape[0], ncols
+        return block
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -109,21 +119,25 @@ class CompressedBasis:
 
     #: memory for one streamed chunk of basis rows in reduce(), in bytes (float64)
     chunk_bytes = 256 * 2 ** 20
-    #: route reduce() of a packed basis to the GPU (mathaccel.gpu), once it stores this many entries
+    #: route packed reduce() and add() rewrites to the GPU once this many entries are stored
     use_gpu = False
     gpu_min_stored = 2_000_000
     _gpu_reducers: dict = {}
 
-    def reduce(self, V: np.ndarray) -> np.ndarray:
+    def _gpu_backend(self, inner: int):
         if self.use_gpu and self.pack and self.rank and self.stored() >= self.gpu_min_stored:
             from . import gpu
 
-            if gpu.available():
+            if inner <= gpu.K_EXACT and gpu.available():
                 red = CompressedBasis._gpu_reducers.get(self.p)
                 if red is None:
                     red = CompressedBasis._gpu_reducers[self.p] = gpu.GPUReducer(self.p)
-                return red.reduce(self, V)
-        return self._reduce_cpu(V)
+                return red
+        return None
+
+    def reduce(self, V: np.ndarray) -> np.ndarray:
+        red = self._gpu_backend(self.rank)
+        return red.reduce(self, V) if red is not None else self._reduce_cpu(V)
 
     def _reduce_cpu(self, V: np.ndarray) -> np.ndarray:
         """V (float64, entries in [0, p), full width n) reduced against the basis, on columns Q.
@@ -189,6 +203,19 @@ class CompressedBasis:
         keep_idx = np.flatnonzero(keep)
         Rk = np.ascontiguousarray(R[:, keep])
         del R
+        red = self._gpu_backend(len(pc))
+        if red is not None:
+            red.rewrite(self.blocks, pc, keep_idx, Rk)
+        else:
+            self._rewrite_cpu(pc, keep_idx, Rk)
+        self.blocks.append(self._store(Rk))
+        self.P = np.concatenate([self.P, self.Q[pc]])
+        self.Q = self.Q[keep]
+        return len(pc)
+
+    def _rewrite_cpu(self, pc: np.ndarray, keep_idx: np.ndarray, Rk: np.ndarray):
+        """Eliminate newly added pivots from the existing stored blocks."""
+        p = self.p
         for i, C in enumerate(self.blocks):
             nkeep = len(keep_idx)
             if self.pack:
@@ -208,10 +235,6 @@ class CompressedBasis:
                 del chunks
             self.blocks[i] = new
             del C
-        self.blocks.append(self._store(Rk))
-        self.P = np.concatenate([self.P, self.Q[pc]])
-        self.Q = self.Q[keep]
-        return len(pc)
 
     def stored(self) -> int:
         return sum(C.size for C in self.blocks)

@@ -1,0 +1,4 @@
+rank=2048 old_q=16383 pivots=256 new_q=16127 block=128 tile=16384 rewrite_rows=512 packed_MB=83.9
+cpu_seconds=[0.8121368999127299, 0.7592978000175208, 0.8025091999443248] median=0.802509
+gpu_seconds=[0.14019169996026903, 0.1458325000712648, 0.1438526000129059] median=0.143853
+packed_bytes_identical=True rewrite_speedup=5.579x

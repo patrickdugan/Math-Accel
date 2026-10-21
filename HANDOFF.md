@@ -197,3 +197,53 @@ loads and runs the actual GPU tests successfully.
    across reduction and rewrite. No rewrite changes were made in this continuation.
 3. Keep following the research lane's original handoff independently; report only its exact
    summary lines when it finishes. Do not pull/commit in a running lane's worktree.
+
+
+## Codex continuation: GPU add() block rewrite (2026-10-21, Asia/Taipei)
+
+The preceding commit `8d496a0` was pushed to `patrickdugan/Math-Accel` main as requested.
+The public remote's ownership and push permission were verified against the connected GitHub
+account. The research job remained running untouched throughout this continuation. No research
+code, processes, Git state, parameters, or checkpoints were changed; its log continued advancing.
+
+**Implemented:** `GPUReducer.rewrite(blocks, pc, keep, Rk)` replaces each old stored block with
+`(blk[:, keep] - blk[:, pc] @ Rk) mod p`, with GPU pivot gathers, exact int8 limb GEMMs,
+modular subtraction, retained-column gathers, and packing into the reference's 20-bit format.
+Packed bytes download directly. Each packed row chunk is uploaded once per rewrite; row cap
+`rewrite_rows` defaults to 512. Blocks retain their boundaries and are replaced progressively.
+The RHS limb cache defaults to 256 MiB; larger RHS data uses bounded column tiles regenerated
+per row chunk. The kernel uses the same int32 and int64 exactness bounds as reduction.
+
+`CompressedBasis.add()` selects this path under the existing `use_gpu` opt-in and
+`gpu_min_stored` threshold. The CPU rewrite was extracted unchanged into `_rewrite_cpu`.
+A GPU product's inner dimension must be <=133144: old rank for reduce(), new pivot count for
+rewrite. Each phase falls back to CPU independently above that bound. RREF of the new rows and
+packing the newly appended block are still CPU work. Reduction and rewrite still upload the
+basis separately; sharing those transfers is future work.
+
+**Validation:** 196 passed (116 CPU/reference + 80 GPU cases), 38.54 s with one CPU thread.
+Coverage adds direct packed-byte comparisons, multiple chunks, odd widths, permuted gathers,
+strided RHS, both cache paths, 1/2/3-limb maximum-inner-dimension cases, non-default streams,
+full-rank/rank-deficient add() sequences, missing-GPU fallback, exception cleanup/retry, and
+CPU reduction above the GPU rank limit with a GPU rewrite afterwards. Reference files are
+unchanged. The shared synthetic fixture was also checked against exact CPU reduction.
+
+**Paired rewrite-only microbenchmarks:** RTX 3050 Laptop, p=263167, block rows 128,
+tile columns 16384, rewrite row cap 512. One CPU thread; the research job was active.
+
+| Old rank | Old q | New pivots | CPU median | GPU median | Speedup |
+|---|---|---|---|---|---|
+| 2048 | 16383 | 256 | 0.802509 s (3 runs) | 0.143853 s (3 runs) | 5.579x |
+| 6144 | 55039 | 512 | 17.850501 s (3 runs) | 1.804926 s (5 runs) | 9.890x |
+
+All measured GPU outputs matched CPU packed bytes. Allocations, transfers, products, modulo,
+and packing are timed; reduction, RREF, and new-block packing are excluded. Raw logs are
+`bench/results/gpu_rewrite_{small,large}.txt`; `bench/bench_gpu_rewrite.py` reproduces them.
+README has commands and caveats. These are not whole-add() or closure speedups. GPU remains
+off by default and the development version is unchanged.
+
+**Next:** keep the research lane untouched. When it is idle, rerun the paired full closure
+benchmark to measure the combined GPU reduce + rewrite path before release promotion.
+The next implementation opportunity is sharing basis uploads across those two phases or
+retaining useful data on device. Follow the separate research handoff for eventual summary
+reporting; do not pull/commit in its running worktree.

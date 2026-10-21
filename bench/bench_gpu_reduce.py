@@ -23,6 +23,29 @@ from mathaccel import CompressedBasis, PackedBlock
 from mathaccel import gpu
 
 
+def packed_basis(rng, rank, cols, block_rows, p):
+    """Generate deterministic synthetic RREF storage without dense float64 copies."""
+    b = CompressedBasis(rank + cols, p, pack=True)
+    b.P = np.arange(rank, dtype=np.int64)
+    b.Q = np.arange(rank, b.n, dtype=np.int64)
+    # Generate packed storage directly, without a large temporary float64 basis.
+    pairs = (cols + 1) // 2
+    for s in range(0, rank, block_rows):
+        rows = min(block_rows, rank - s)
+        lo = rng.integers(0, p, (rows, pairs), dtype=np.uint64)
+        hi = rng.integers(0, p, (rows, pairs), dtype=np.uint64)
+        if cols % 2:
+            hi[:, -1] = 0
+        words = lo | (hi << 20)
+        block = object.__new__(PackedBlock)
+        block.rows, block.ncols = rows, cols
+        block.data = np.empty((rows, pairs, 5), dtype=np.uint8)
+        for byte in range(5):
+            block.data[:, :, byte] = (words >> (8 * byte)).astype(np.uint8)
+        b.blocks.append(block)
+    return b
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--rank', type=int, default=6144)
@@ -48,24 +71,7 @@ def main():
     cp = backend.cp
     rng = np.random.default_rng(2026)
     p = 263167
-    b = CompressedBasis(args.rank + args.cols, p, pack=True)
-    b.P = np.arange(args.rank, dtype=np.int64)
-    b.Q = np.arange(args.rank, b.n, dtype=np.int64)
-    # Generate packed storage directly, without a large temporary float64 basis.
-    pairs = (args.cols + 1) // 2
-    for s in range(0, args.rank, args.block):
-        rows = min(args.block, args.rank - s)
-        lo = rng.integers(0, p, (rows, pairs), dtype=np.uint64)
-        hi = rng.integers(0, p, (rows, pairs), dtype=np.uint64)
-        if args.cols % 2:
-            hi[:, -1] = 0
-        words = lo | (hi << 20)
-        block = object.__new__(PackedBlock)
-        block.rows, block.ncols = rows, args.cols
-        block.data = np.empty((rows, pairs, 5), dtype=np.uint8)
-        for byte in range(5):
-            block.data[:, :, byte] = (words >> (8 * byte)).astype(np.uint8)
-        b.blocks.append(block)
+    b = packed_basis(rng, args.rank, args.cols, args.block, p)
     V = rng.integers(0, p, (args.batch, b.n), dtype=np.int32).astype(np.float64)
     reducer = backend.GPUReducer(p, args.tile_cols, args.rows_chunk)
     print(f'source={args.source or "mathaccel.gpu"} rank={args.rank} q={args.cols} '

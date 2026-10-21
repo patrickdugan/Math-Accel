@@ -22,6 +22,11 @@ the probe V (float64), its coefficient limbs, and the current output tile.
 Two pinned host buffers and a separate upload stream overlap staging and transfers
 with the preceding chunk's unpack and GEMMs. Events protect both host and device
 buffers from reuse while a transfer or an unpack is still reading them.
+
+`rewrite(blocks, pc, keep, Rk)` eliminates new pivots from existing packed blocks.
+It gathers pivot limbs and retained entries on device, computes the same exact
+product, and folds directly into packed bytes. Row chunks bound source/workspace
+memory; a bounded RHS limb cache reuses the new rows across old blocks.
 """
 
 from __future__ import annotations
@@ -89,6 +94,67 @@ void fold_mod(const int* C, int L, long long plane, const long long* cw, long lo
 }
 """
 
+_REWRITE_SRC = r"""
+__device__ __forceinline__ unsigned int packed_value(const unsigned char* data,
+                                                     int pairs, int row, long long col) {
+    const unsigned char* b = data + ((long long)row * pairs + col / 2) * 5;
+    unsigned long long w = (unsigned long long)b[0] | ((unsigned long long)b[1] << 8)
+        | ((unsigned long long)b[2] << 16) | ((unsigned long long)b[3] << 24)
+        | ((unsigned long long)b[4] << 32);
+    return (unsigned int)((w >> ((col & 1) * 20)) & 0xFFFFFull);
+}
+
+extern "C" __global__
+void gather_pivot_limbs(const unsigned char* data, int pairs, int rows,
+                       const long long* pc, int k, int mpad, int kpad, int L,
+                       signed char* out) {
+    long long x = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (x >= (long long)rows * k) return;
+    int row = (int)(x / k), col = (int)(x % k);
+    unsigned int v = packed_value(data, pairs, row, pc[col]);
+    for (int l = 0; l < L; l++)
+        out[((long long)l * mpad + row) * kpad + col] = (signed char)((v >> (7 * l)) & 127u);
+}
+
+extern "C" __global__
+void dense_limbs_T(const double* data, int k, int cols, int kpad, int qpad, int L,
+                   signed char* out) {
+    long long x = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (x >= (long long)k * cols) return;
+    int row = (int)(x / cols), col = (int)(x % cols);
+    unsigned int v = (unsigned int)data[x];
+    for (int l = 0; l < L; l++)
+        out[((long long)l * qpad + col) * kpad + row] = (signed char)((v >> (7 * l)) & 127u);
+}
+
+extern "C" __global__
+void rewrite_pack(const unsigned char* data, int oldpairs, const long long* keep,
+                  int c0, int cols, int qpad, const int* C, int L, long long plane,
+                  const long long* cw, long long p, unsigned char* out, long long n) {
+    long long x = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (x >= n) return;
+    int pairs = (cols + 1) / 2;
+    int row = (int)(x / pairs), pair = (int)(x % pairs);
+    unsigned long long w = 0;
+    for (int h = 0; h < 2; h++) {
+        int col = pair * 2 + h;
+        if (col >= cols) break;
+        long long offset = (long long)row * qpad + col;
+        long long s = 0;
+        // Same bound as fold_mod: the entire weighted sum is below 2^56.
+        for (int i = 0; i < L; i++)
+            for (int j = 0; j < L; j++)
+                s += cw[i + j] * (long long)C[(long long)(i * L + j) * plane + offset];
+        long long residue = (long long)packed_value(data, oldpairs, row, keep[c0 + col]) - s % p;
+        if (residue < 0) residue += p;
+        w |= (unsigned long long)residue << (20 * h);
+    }
+    for (int byte = 0; byte < 5; byte++)
+        out[x * 5 + byte] = (unsigned char)(w >> (8 * byte));
+}
+"""
+
+
 
 def available() -> bool:
     if not HAVE_CUPY:
@@ -104,16 +170,25 @@ def _pad(x: int, a: int = 16) -> int:
 
 
 class GPUReducer:
-    def __init__(self, p: int, tile_cols: int = 16384, rows_chunk: int = 8192):
+    #: Maximum cached RHS limbs for add() rewrites.
+    rewrite_cache_bytes = 256 * 2 ** 20
+
+    def __init__(self, p: int, tile_cols: int = 16384, rows_chunk: int = 8192,
+                 rewrite_rows: int = 512):
         assert HAVE_CUPY, "cupy is not installed"
         assert p < 2 ** (3 * LIMB_BITS), "three 7-bit limbs hold residues below 2^21"
         self.p = p
         self.L = max(1, -(-int(p - 1).bit_length() // LIMB_BITS))
         self.tile_cols = _pad(tile_cols)
         self.rows_chunk = _pad(min(rows_chunk, K_EXACT))
+        assert rewrite_rows > 0
+        self.rewrite_rows = _pad(rewrite_rows)
         self.cw = cp.asarray([pow(2, LIMB_BITS * t, p) for t in range(2 * self.L - 1)], dtype=cp.int64)
         self._unpack = cp.RawKernel(_UNPACK_SRC, "unpack_limbs_T")
         self._fold = cp.RawKernel(_FOLD_SRC, "fold_mod")
+        self._pivot_limbs = cp.RawKernel(_REWRITE_SRC, "gather_pivot_limbs")
+        self._dense_limbs = cp.RawKernel(_REWRITE_SRC, "dense_limbs_T")
+        self._rewrite_pack = cp.RawKernel(_REWRITE_SRC, "rewrite_pack")
         self._handle = cp.cuda.device.get_cublas_handle()
         self._one = np.array(1, np.int32)
         self._ready = cp.cuda.Event(disable_timing=True)
@@ -239,5 +314,97 @@ class GPUReducer:
             # Also on exceptions, don't release pinned/device buffers while an
             # upload or unpack still uses them. Stream order covers all GEMMs.
             upload.synchronize()
+            compute.synchronize()
+            cublas.setStream(self._handle, previous_stream)
+
+    def _rhs_limbs(self, Rk: np.ndarray, kpad: int, qpad: int):
+        """Upload a dense RHS tile and split its limbs into padded, transposed storage."""
+        k, q = Rk.shape
+        dense = cp.asarray(Rk, dtype=cp.float64, order="C")
+        limbs = cp.zeros((self.L, qpad, kpad), dtype=cp.int8)
+        total = k * q
+        self._dense_limbs(((total + 255) // 256,), (256,),
+                          (dense, np.int32(k), np.int32(q), np.int32(kpad),
+                           np.int32(qpad), np.int32(self.L), limbs))
+        return limbs
+
+    def rewrite(self, blocks: list, pc: np.ndarray, keep: np.ndarray, Rk: np.ndarray):
+        """In place: blk[:, keep] - blk[:, pc] @ Rk mod p, returned as packed blocks.
+
+        Upload each packed row chunk once, gather its pivot coefficients on device,
+        and download packed results directly. Preserve block boundaries and release
+        each old block as it is replaced. RHS limbs are cached if they fit 256 MiB;
+        larger RHS matrices are tiled and regenerated per row chunk to bound VRAM.
+        """
+        from .basis import PackedBlock
+
+        if not blocks:
+            return
+        k, q = Rk.shape
+        assert k == len(pc) and q == len(keep) and 0 < k <= K_EXACT
+        assert all(getattr(getattr(C, "data", None), "ndim", 0) == 3 and C.data.shape[2] == 5
+                   for C in blocks), "GPU rewrite needs packed blocks"
+        if not q:
+            for i, C in enumerate(blocks):
+                blocks[i] = PackedBlock._from_packed(np.empty((C.rows, 0, 5), dtype=np.uint8), 0)
+            return
+        L, kpad = self.L, _pad(k)
+        compute = cp.cuda.get_current_stream()
+        compute.wait_event(self._ready)
+        previous_stream = cublas.getStream(self._handle)
+        # Bound each RHS tile's limbs, even at the maximum exact inner dimension.
+        budget = self.rewrite_cache_bytes
+        tile = min(self.tile_cols, max(16, budget // (L * kpad) // 16 * 16))
+        ranges = [(c0, min(q, c0 + tile)) for c0 in range(0, q, tile)]
+        cached = L * kpad * _pad(q) <= budget
+        rhs = [self._rhs_limbs(Rk[:, a:b], kpad, _pad(b - a)) for a, b in ranges] if cached else None
+        dpc, dkeep = cp.asarray(pc, dtype=cp.int64), cp.asarray(keep, dtype=cp.int64)
+        oldpairs = blocks[0].data.shape[1]
+        rows_cap = min(self.rewrite_rows, max(C.rows for C in blocks))
+        capacity = rows_cap * oldpairs * 5
+        pinned = cp.cuda.alloc_pinned_memory(capacity)
+        host = np.frombuffer(pinned, dtype=np.uint8)
+        device = cp.empty(capacity, dtype=cp.uint8)
+        try:
+            cublas.setStream(self._handle, compute.ptr)
+            for index in range(len(blocks)):
+                C = blocks[index]
+                assert C.ncols == k + q and C.data.shape[1] == oldpairs
+                data = np.empty((C.rows, (q + 1) // 2, 5), dtype=np.uint8)
+                for start in range(0, C.rows, rows_cap):
+                    end = min(C.rows, start + rows_cap)
+                    rows, mpad = end - start, _pad(end - start)
+                    size = rows * oldpairs * 5
+                    chunk = host[:size].reshape(rows, oldpairs, 5)
+                    chunk[:] = C.data[start:end]
+                    source = device[:size].reshape(rows, oldpairs, 5)
+                    source.set(chunk, stream=compute)
+                    A = cp.zeros((L, mpad, kpad), dtype=cp.int8)
+                    total = rows * k
+                    self._pivot_limbs(((total + 255) // 256,), (256,),
+                                      (source, np.int32(oldpairs), np.int32(rows), dpc,
+                                       np.int32(k), np.int32(mpad), np.int32(kpad), np.int32(L), A))
+                    for ti, (c0, c1) in enumerate(ranges):
+                        cols, qpad = c1 - c0, _pad(c1 - c0)
+                        B = rhs[ti] if cached else self._rhs_limbs(Rk[:, c0:c1], kpad, qpad)
+                        accum = cp.zeros((L * L, mpad, qpad), dtype=cp.int32)
+                        for i in range(L):
+                            for j in range(L):
+                                self._gemm_acc(A[i].data.ptr, kpad, B[j].data.ptr, kpad,
+                                               accum[i * L + j].data.ptr, mpad, qpad, kpad)
+                        out = cp.empty((rows, (cols + 1) // 2, 5), dtype=cp.uint8)
+                        total = rows * ((cols + 1) // 2)
+                        self._rewrite_pack(((total + 255) // 256,), (256,),
+                                           (source, np.int32(oldpairs), dkeep, np.int32(c0),
+                                            np.int32(cols), np.int32(qpad), accum, np.int32(L),
+                                            np.int64(mpad * qpad), self.cw, np.int64(self.p),
+                                            out, np.int64(total)))
+                        # This wait also protects staging-buffer reuse on the next row chunk.
+                        data[start:end, c0 // 2:(c1 + 1) // 2] = cp.asnumpy(out)
+                        del accum, out, B
+                    del A, source
+                blocks[index] = PackedBlock._from_packed(data, q)
+                del C
+        finally:
             compute.synchronize()
             cublas.setStream(self._handle, previous_stream)
