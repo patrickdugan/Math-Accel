@@ -29,6 +29,7 @@ ap.add_argument("k", type=int)
 ap.add_argument("m", type=int)
 ap.add_argument("D", type=int)
 ap.add_argument("--seconds", type=float, default=None)
+ap.add_argument("--gpu", action="store_true", help="accel only: GPU reduce() (mathaccel.gpu)")
 a = ap.parse_args()
 
 sys.path.insert(0, a.repo)
@@ -42,7 +43,8 @@ if a.which == "accel":
     import mathaccel
 
     CC.CompressedBasis = mathaccel.CompressedBasis
-    print(f"mathaccel {mathaccel.__version__}, numba={mathaccel.HAVE_NUMBA}", flush=True)
+    mathaccel.CompressedBasis.use_gpu = a.gpu
+    print(f"mathaccel {mathaccel.__version__}, numba={mathaccel.HAVE_NUMBA}, gpu={a.gpu}", flush=True)
 
 p, E, X = RC.cell_setup(a.tower, a.k, 2026)
 alg = ChainAlgebra(a.tower, p, a.m, a.k, a.D, RC.AUX.get(a.tower))
@@ -56,7 +58,7 @@ r = CC.closure_compressed(view, G, a.D, symmetric=False, batch=RC.CBATCH, pack=p
                           checkpoint=str(ck) if a.seconds else None, stop_after=a.seconds,
                           log=lambda s: print(s, flush=True))
 wall = time.time() - t0
-print(f"RESULT {a.which} {a.tower} k={a.k} m={a.m} D={a.D} n={r.get('n')} rank={r.get('rank')} "
+print(f"RESULT {a.which}{'+gpu' if a.gpu else ''} {a.tower} k={a.k} m={a.m} D={a.D} n={r.get('n')} rank={r.get('rank')} "
       f"refuted={r.get('one_in_W')} interrupted={r.get('interrupted', False)} wall={wall:.1f}s", flush=True)
 for f in tmp.glob("*"):
     f.unlink()

@@ -109,8 +109,23 @@ class CompressedBasis:
 
     #: memory for one streamed chunk of basis rows in reduce(), in bytes (float64)
     chunk_bytes = 256 * 2 ** 20
+    #: route reduce() of a packed basis to the GPU (mathaccel.gpu), once it stores this many entries
+    use_gpu = False
+    gpu_min_stored = 2_000_000
+    _gpu_reducers: dict = {}
 
     def reduce(self, V: np.ndarray) -> np.ndarray:
+        if self.use_gpu and self.pack and self.rank and self.stored() >= self.gpu_min_stored:
+            from . import gpu
+
+            if gpu.available():
+                red = CompressedBasis._gpu_reducers.get(self.p)
+                if red is None:
+                    red = CompressedBasis._gpu_reducers[self.p] = gpu.GPUReducer(self.p)
+                return red.reduce(self, V)
+        return self._reduce_cpu(V)
+
+    def _reduce_cpu(self, V: np.ndarray) -> np.ndarray:
         """V (float64, entries in [0, p), full width n) reduced against the basis, on columns Q.
 
         The rows of all blocks are streamed in order into one buffer of `chunk` rows (at least

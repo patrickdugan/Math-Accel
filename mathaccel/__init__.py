@@ -14,5 +14,5 @@ the equivalence tests.
 from .basis import CompressedBasis, PackedBlock, submul
 from .kernels import HAVE_NUMBA
 
-__version__ = "0.2.0"
+__version__ = "0.3.0.dev0"
 __all__ = ["CompressedBasis", "PackedBlock", "submul", "HAVE_NUMBA", "__version__"]
