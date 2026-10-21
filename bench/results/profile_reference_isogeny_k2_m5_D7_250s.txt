@@ -1,0 +1,69 @@
+  [     63s] rank 2898/15360 queue 188 stored 36114876
+  [    129s] rank 3960/15360 queue 288 stored 45144000
+  [    190s] rank 4775/15360 queue 372 stored 50543375
+  [    250s] checkpoint D:\Temp\prof\prof.ckpt (0.13 GB)
+wall 250.3s rank 5501 n 15360 interrupted True
+===== by tottime
+         612350 function calls (611919 primitive calls) in 250.274 seconds
+
+   Ordered by: internal time
+   List reduced from 156 to 22 due to restriction <22>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+    18422   57.758    0.003   73.742    0.004 D:\semaev-nb\semaev_ic\cbasis.py:52(__getitem__)
+       56   49.896    0.891   92.671    1.655 D:\semaev-nb\semaev_ic\cbasis.py:91(reduce)
+     1586   42.247    0.027   42.278    0.027 D:\semaev-nb\semaev_ic\closure_fast.py:53(submul)
+     2550   22.575    0.009   22.575    0.009 {built-in method numpy.ascontiguousarray}
+       56   18.490    0.330  233.492    4.170 D:\semaev-nb\semaev_ic\cbasis.py:114(add)
+     1275   17.937    0.014   24.417    0.019 D:\semaev-nb\semaev_ic\cbasis.py:35(__init__)
+    36880   15.629    0.000   15.629    0.000 {method 'astype' of 'numpy.ndarray' objects}
+      210   11.786    0.056   11.796    0.056 D:\semaev-nb\semaev_ic\closure_fast.py:318(apply)
+     6006    4.209    0.001    4.209    0.001 {method 'copy' of 'numpy.ndarray' objects}
+     7386    2.040    0.000    2.040    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+      208    1.877    0.009    1.881    0.009 C:\Users\patri\semaev-index-calculus\.venv\Lib\site-packages\numpy\_core\shape_base.py:218(vstack)
+      232    1.294    0.006    3.040    0.013 D:\semaev-nb\semaev_ic\closure_fast.py:65(_rref_small)
+     2625    1.124    0.000   73.489    0.028 D:\semaev-nb\semaev_ic\cbasis.py:68(_chunk64)
+      210    0.977    0.005    2.564    0.012 D:\semaev-nb\semaev_ic\closure_compressed.py:45(_rows)
+        1    0.852    0.852  250.274  250.274 D:\semaev-nb\semaev_ic\closure_compressed.py:85(closure_compressed)
+    20258    0.281    0.000    0.281    0.000 {built-in method numpy.zeros}
+   414/50    0.199    0.000    9.499    0.190 D:\semaev-nb\semaev_ic\closure_fast.py:91(rref)
+       29    0.120    0.004  233.620    8.056 D:\semaev-nb\semaev_ic\closure_compressed.py:175(add_rows)
+    31806    0.114    0.000    0.114    0.000 {method 'searchsorted' of 'numpy.ndarray' objects}
+        1    0.107    0.107    0.107    0.107 {built-in method _pickle.dump}
+    18534    0.103    0.000    0.103    0.000 {built-in method numpy.empty}
+    19697    0.066    0.000    0.066    0.000 {method 'view' of 'numpy.ndarray' objects}
+
+
+
+===== by cumulative
+         612350 function calls (611919 primitive calls) in 250.274 seconds
+
+   Ordered by: cumulative time
+   List reduced from 156 to 22 due to restriction <22>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.852    0.852  250.274  250.274 D:\semaev-nb\semaev_ic\closure_compressed.py:85(closure_compressed)
+       29    0.120    0.004  233.620    8.056 D:\semaev-nb\semaev_ic\closure_compressed.py:175(add_rows)
+       56   18.490    0.330  233.492    4.170 D:\semaev-nb\semaev_ic\cbasis.py:114(add)
+       56   49.896    0.891   92.671    1.655 D:\semaev-nb\semaev_ic\cbasis.py:91(reduce)
+    18422   57.758    0.003   73.742    0.004 D:\semaev-nb\semaev_ic\cbasis.py:52(__getitem__)
+     2625    1.124    0.000   73.489    0.028 D:\semaev-nb\semaev_ic\cbasis.py:68(_chunk64)
+     1586   42.247    0.027   42.278    0.027 D:\semaev-nb\semaev_ic\closure_fast.py:53(submul)
+     1275   17.937    0.014   24.417    0.019 D:\semaev-nb\semaev_ic\cbasis.py:35(__init__)
+     2550   22.575    0.009   22.575    0.009 {built-in method numpy.ascontiguousarray}
+    36880   15.629    0.000   15.629    0.000 {method 'astype' of 'numpy.ndarray' objects}
+      210   11.786    0.056   11.796    0.056 D:\semaev-nb\semaev_ic\closure_fast.py:318(apply)
+   414/50    0.199    0.000    9.499    0.190 D:\semaev-nb\semaev_ic\closure_fast.py:91(rref)
+     6006    4.209    0.001    4.209    0.001 {method 'copy' of 'numpy.ndarray' objects}
+      232    1.294    0.006    3.040    0.013 D:\semaev-nb\semaev_ic\closure_fast.py:65(_rref_small)
+      210    0.977    0.005    2.564    0.012 D:\semaev-nb\semaev_ic\closure_compressed.py:45(_rows)
+     7386    2.040    0.000    2.040    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+     5970    0.014    0.000    1.891    0.000 {method 'any' of 'numpy.ndarray' objects}
+      208    1.877    0.009    1.881    0.009 C:\Users\patri\semaev-index-calculus\.venv\Lib\site-packages\numpy\_core\shape_base.py:218(vstack)
+     5970    0.007    0.000    1.877    0.000 C:\Users\patri\semaev-index-calculus\.venv\Lib\site-packages\numpy\_core\_methods.py:55(_any)
+       50    0.058    0.001    1.030    0.021 D:\semaev-nb\semaev_ic\cbasis.py:84(_store)
+    20258    0.281    0.000    0.281    0.000 {built-in method numpy.zeros}
+    48755    0.037    0.000    0.223    0.000 C:\Users\patri\semaev-index-calculus\.venv\Lib\site-packages\numpy\_core\fromnumeric.py:48(_wrapfunc)
+
+
+

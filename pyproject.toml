@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "math-accel"
+version = "0.1.0"
+description = "Exact modular linear algebra for degree-bounded closures (Macaulay / polynomial-calculus style) mod p"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Patrick Dugan" }, { name = "Claude (Anthropic)" }]
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+fast = ["numba>=0.59"]
+test = ["pytest>=7", "numba>=0.59"]
+
+[tool.setuptools.packages.find]
+include = ["mathaccel*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
