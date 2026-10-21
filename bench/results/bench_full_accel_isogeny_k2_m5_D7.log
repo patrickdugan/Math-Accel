@@ -1,0 +1,9 @@
+mathaccel 0.1.0, numba=True
+  [     61s] rank 3753/15360 queue 266 stored 43561071
+  [    122s] rank 5325/15360 queue 430 stored 53436375
+  [    183s] rank 6262/15360 queue 585 stored 56971676
+  [    243s] rank 6763/15360 queue 678 stored 58141511
+  [    306s] rank 7994/15360 queue 638 stored 58883804
+  [    369s] rank 9612/15360 queue 691 stored 55249776
+  [    433s] rank 12867/15360 queue 667 stored 32077431
+RESULT accel isogeny k=2 m=5 D=7 n=15360 rank=15360 refuted=True interrupted=False wall=445.9s

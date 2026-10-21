@@ -65,7 +65,10 @@ its time went to single-threaded memory work.
 | Closure | Reference | Math-Accel | Result |
 |---|---|---|---|
 | isogeny $m=5$, $D=6$, 7937 columns, run to completion | 51.7 s | 29.6 s (**1.75×**) | rank 3695 for both |
+| isogeny $m=5$, $D=7$, 15360 columns, run to completion | 972.7 s | 445.9 s (**2.18×**) | refuted ($1\in W_D$, rank 15360) for both |
 | isogeny $m=5$, $D=7$, 15360 columns, first 240 s | rank 5056 | rank 7203 | — |
+
+For comparison, the research project's dense kernel needed 1576 s for the same $D=7$ closure.
 
 `bench/bench_chain.py` reproduces these. It needs the research repository's closure driver.
 

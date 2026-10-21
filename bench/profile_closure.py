@@ -1,6 +1,6 @@
 """Profile closure_compressed on one chain closure, the way run_chain.py --engine compressed calls it.
 
-Usage: python bench/profile_closure.py PATH_TO_semaev_ic TOWER K M D SECONDS
+Usage: python bench/profile_closure.py PATH_TO_semaev_ic TOWER K M D SECONDS [--accel]
 Runs one target's closure at degree D for SECONDS (closure_compressed's stop_after hook), with a
 throwaway checkpoint in the temp directory, and prints the cProfile tables.
 """
@@ -16,7 +16,16 @@ sys.path.insert(0, sys.argv.pop(1))  # first argument: the research repository's
 import run_chain as RC  # noqa: E402
 from chain import ChainAlgebra, chain_generators  # noqa: E402
 from chain_engine import EngineView  # noqa: E402
-from closure_compressed import closure_compressed  # noqa: E402
+import closure_compressed as CC  # noqa: E402
+
+ACCEL = "--accel" in sys.argv
+if ACCEL:
+    sys.argv.remove("--accel")
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    import mathaccel
+
+    CC.CompressedBasis = mathaccel.CompressedBasis
+closure_compressed = CC.closure_compressed
 
 tower, k, m, D, secs = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), float(sys.argv[5])
 p, E, X = RC.cell_setup(tower, k, 2026)

@@ -1,0 +1,15 @@
+  [     70s] rank 3126/15360 queue 209 stored 38243484
+  [    136s] rank 3960/15360 queue 288 stored 45144000
+  [    201s] rank 4775/15360 queue 372 stored 50543375
+  [    265s] rank 5501/15360 queue 440 stored 54234359
+  [    339s] rank 5959/15360 queue 541 stored 56020559
+  [    408s] rank 6298/15360 queue 595 stored 57072476
+  [    479s] rank 6587/15360 queue 648 stored 57787751
+  [    540s] rank 6892/15360 queue 680 stored 58361456
+  [    608s] rank 7628/15360 queue 628 stored 58979696
+  [    676s] rank 8402/15360 queue 665 stored 58461116
+  [    752s] rank 9309/15360 queue 670 stored 56328759
+  [    816s] rank 9899/15360 queue 704 stored 54058439
+  [    882s] rank 10814/15360 queue 695 stored 49160444
+  [    949s] rank 12867/15360 queue 667 stored 32077431
+RESULT ref isogeny k=2 m=5 D=7 n=15360 rank=15360 refuted=True interrupted=False wall=972.7s
