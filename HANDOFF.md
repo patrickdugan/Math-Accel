@@ -127,3 +127,22 @@ With the compressed engine at cap 72000, isogeny k=4 m=4 gave ['>6', '>6', '>6']
 
 **The paper** (`main` of `semaev-index-calculus`, `paper/paper.md`, revision 5, with Claude as
 co-author) is finished. A Mythos session is polishing it. Don't edit it unless asked.
+
+## Update: the GPU benchmark result (just in)
+
+On isogeny h=2, m=6, D=7 (61183 columns), in the same 240 s window:
+
+| Engine | Rank reached |
+|---|---|
+| CPU v0.2 | 6118 |
+| GPU path | 5463 |
+
+The GPU path is **not faster yet** at this size. The likely causes, to check first:
+- Pageable host-to-GPU copies (2.1 GB/s), assembled with `np.concatenate`.
+- The whole basis is re-uploaded on every `reduce()` call.
+- `add()` still runs on the CPU.
+- Small bases pay the per-tile setup cost.
+
+Profile `GPUReducer.reduce` before going further (next steps 2–3 above). Raising
+`gpu_min_stored` would keep small bases on the CPU. The GPU path stays off by default
+(`use_gpu = False`), so nothing depends on it.
