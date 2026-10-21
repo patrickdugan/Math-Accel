@@ -76,7 +76,7 @@ unpacks and copies.
 What v0.2 changed in `reduce()`:
 - it streams the rows of consecutive blocks into one buffer of adaptive size, so there are fewer
   and larger exact matrix products, each at most $k_{\max}(p)$ terms;
-- it accumulates in place with BLAS `dgemm` and $eta=1$, with no temporary and no coefficient
+- it accumulates in place with BLAS `dgemm` and $\beta=1$, with no temporary and no coefficient
   copies (SciPy, optional).
 
 `add()` uses the same in-place update.
